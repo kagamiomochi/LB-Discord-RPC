@@ -68,6 +68,7 @@ function setListeningActivity({
   smallImageText,
   startTimestamp,
   endTimestamp,
+  trackUrl,
 }) {
   return rpc.request("SET_ACTIVITY", {
     pid: process.pid,
@@ -87,6 +88,11 @@ function setListeningActivity({
         startTimestamp && endTimestamp
           ? { start: startTimestamp, end: endTimestamp }
           : undefined,
+      // クリックでListenBrainzのトラックページに飛べるボタン
+      // （自分のプロフィール画面には出ない仕様。他人から見た時だけ表示される）
+      buttons: trackUrl
+        ? [{ label: "ListenBrainzで開く", url: trackUrl }]
+        : undefined,
       instance: false,
     },
   });
@@ -198,13 +204,14 @@ async function fetchRecordingLength(recordingMbid) {
  * の順に条件を緩めて再試行する。
  * @param {number|null} knownDurationMs ListenBrainz側から既に分かっている曲の長さ(ms)。
  *   これがあればMusicBrainzへの追加問い合わせをスキップする。
- * @returns {Promise<{coverUrl: string|null, durationMs: number|null}>}
+ * @returns {Promise<{coverUrl: string|null, durationMs: number|null, recordingMbid: string|null}>}
  */
 async function resolveTrackMeta(artist, track, album, knownDurationMs) {
   const cacheKey = `${artist}|${track}|${album}`;
   if (trackMetaCache.has(cacheKey)) return trackMetaCache.get(cacheKey);
 
   let coverUrl = null;
+  let recordingMbid = null;
   let durationMs = knownDurationMs || null;
 
   if (!LB_TOKEN) {
@@ -222,6 +229,9 @@ async function resolveTrackMeta(artist, track, album, knownDurationMs) {
         coverUrl = hit.coverUrl;
         console.log(`[lb] ジャケット検索ヒット: "${c.artist}" - "${c.track}"`);
       }
+      if (hit?.recordingMbid) {
+        recordingMbid = hit.recordingMbid;
+      }
       // 曲の長さがまだ分かっていなければMusicBrainzから補完する
       if (!durationMs && hit?.recordingMbid) {
         durationMs = await fetchRecordingLength(hit.recordingMbid);
@@ -231,7 +241,7 @@ async function resolveTrackMeta(artist, track, album, knownDurationMs) {
     }
   }
 
-  const result = { coverUrl, durationMs };
+  const result = { coverUrl, durationMs, recordingMbid };
   trackMetaCache.set(cacheKey, result);
   return result;
 }
@@ -277,8 +287,8 @@ async function tick() {
 
     const key = `${np.artist}|${np.track}|${np.album}`;
     if (key !== lastKey && rpcReady) {
-      // 曲が変わった時だけメタ情報(ジャケット・曲の長さ)を探しに行く（毎tickでは叩かない）
-      const { coverUrl, durationMs } = await resolveTrackMeta(
+      // 曲が変わった時だけメタ情報(ジャケット・曲の長さ・MBID)を探しに行く（毎tickでは叩かない）
+      const { coverUrl, durationMs, recordingMbid } = await resolveTrackMeta(
         np.artist,
         np.track,
         np.album,
@@ -294,6 +304,10 @@ async function tick() {
         endTimestamp = startTimestamp + durationMs;
       }
 
+      const trackUrl = recordingMbid
+        ? `https://listenbrainz.org/player/?recording_mbids=${recordingMbid}`
+        : null;
+
       await setListeningActivity({
         details: np.track,
         state: `by ${np.artist}${np.album ? " - " + np.album : ""}`,
@@ -304,6 +318,7 @@ async function tick() {
         smallImageText: "Listening via ListenBrainz",
         startTimestamp,
         endTimestamp,
+        trackUrl,
       });
       lastKey = key;
       console.log(
