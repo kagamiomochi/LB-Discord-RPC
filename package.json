@@ -1,0 +1,16 @@
+{
+  "name": "lb-discord-rpc",
+  "version": "1.0.0",
+  "description": "ListenBrainz NowPlaying -> Discord Rich Presence",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "discord-rpc": "^4.0.1"
+  }
+}
