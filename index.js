@@ -15,8 +15,15 @@ const LB_USERNAME = process.env.LB_USERNAME || "your-listenbrainz-username";
 // /1/metadata/lookup/ エンドポイントの呼び出しに必須
 const LB_TOKEN = process.env.LB_TOKEN || "";
 
-// ポーリング間隔（ミリ秒）。ListenBrainz APIへの配慮で5秒未満は非推奨
+// 曲の長さが分からない時のフォールバック・ポーリング間隔（ミリ秒）
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15000);
+
+// 曲の長さが分かっている時の適応ポーリングの下限・上限（ミリ秒）
+const MIN_POLL_INTERVAL_MS = Number(process.env.MIN_POLL_INTERVAL_MS || 5000);
+const MAX_POLL_INTERVAL_MS = Number(process.env.MAX_POLL_INTERVAL_MS || 45000);
+
+// 曲の終了予定時刻ちょうどではなく、少し過ぎたタイミングで確認する猶予（ミリ秒）
+const END_BUFFER_MS = 2000;
 
 // 何ms更新が来なかったらPresenceを消すか
 const STALE_TIMEOUT_MS = 60 * 1000;
@@ -102,6 +109,8 @@ function setListeningActivity({
 let lastKey = null;
 let staleTimer = null;
 let pollTimer = null;
+// 今再生中と思われる曲の終了予定時刻（曲の長さが分かっている時だけセットされる）
+let currentEndTimestamp = null;
 
 function resetStaleTimer() {
   if (staleTimer) clearTimeout(staleTimer);
@@ -282,6 +291,7 @@ async function tick() {
         lastKey = null;
         console.log("[lb] 再生停止中");
       }
+      currentEndTimestamp = null;
       return;
     }
 
@@ -303,6 +313,7 @@ async function tick() {
         startTimestamp = Date.now();
         endTimestamp = startTimestamp + durationMs;
       }
+      currentEndTimestamp = endTimestamp || null;
 
       const trackUrl = recordingMbid
         ? `https://listenbrainz.org/player/?recording_mbids=${recordingMbid}`
@@ -333,8 +344,28 @@ async function tick() {
   }
 }
 
+/**
+ * 次にポーリングするまでの待ち時間を計算する。
+ * 曲の終了予定時刻が分かっていれば「終わりそうなタイミングの少し後」を狙い、
+ * 分からなければ既定のPOLL_INTERVAL_MSを使う。
+ * 上下限(MIN/MAX_POLL_INTERVAL_MS)でクランプし、極端に短い/長い待ちを避ける
+ * （長すぎる待ちにしないのは、途中でスキップされた場合になるべく早く気付くため）。
+ */
+function computeNextDelay() {
+  if (!currentEndTimestamp) return POLL_INTERVAL_MS;
+
+  const remaining = currentEndTimestamp - Date.now() + END_BUFFER_MS;
+  return Math.min(Math.max(remaining, MIN_POLL_INTERVAL_MS), MAX_POLL_INTERVAL_MS);
+}
+
+async function scheduleNext() {
+  await tick();
+  const delay = computeNextDelay();
+  console.log(`[lb] 次回ポーリングまで ${Math.round(delay / 1000)}秒`);
+  pollTimer = setTimeout(scheduleNext, delay);
+}
+
 function startPolling() {
   if (pollTimer) return;
-  tick();
-  pollTimer = setInterval(tick, POLL_INTERVAL_MS);
+  scheduleNext();
 }

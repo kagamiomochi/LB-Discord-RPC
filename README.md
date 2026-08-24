@@ -23,14 +23,14 @@ npm start
 
 `LB_TOKEN`は https://listenbrainz.org/settings/ の「User Token」から取得できる（ジャケット画像検索に使う`/1/metadata/lookup/`エンドポイントが認証必須のため）。
 
-環境変数は以下の通り（`POLL_INTERVAL_MS`は任意、デフォルト15000ms）:
+環境変数は以下の通り（ポーリング間隔まわりの3つは任意。詳細は下記「ポーリング方式について」）:
 
 | 変数 | 内容 |
 |---|---|
 | `DISCORD_CLIENT_ID` | DiscordアプリケーションのID（必須） |
 | `LB_USERNAME` | ListenBrainzのユーザー名（必須） |
 | `LB_TOKEN` | ListenBrainzのユーザートークン（ジャケット画像検索に必須。未設定でも動くがジャケットは常に既定ロゴになる） |
-| `POLL_INTERVAL_MS` | ポーリング間隔ms（省略可、デフォルト15000） |
+| `POLL_INTERVAL_MS` | 曲の長さ不明時の固定間隔ms（省略可、デフォルト15000） |
 
 ## ジャケット画像について
 
@@ -60,9 +60,32 @@ Discordのプロフィール上でSpotifyだけに出る「クリックしてシ
 
 再生検出のタイミングを「再生開始」とみなして`startTimestamp`を打つため、ポーリング間隔（デフォルト15秒）ぶんの誤差が出うる点は留意。
 
+## トラックページへのボタンについて
+
+MusicBrainzにマッチできた曲は、`https://listenbrainz.org/player/?recording_mbids={mbid}`
+へのボタンをRPCに付けている（クリックすると再生ページが開く）。
+
+Discordの仕様上、このボタンは**自分自身のプロフィール画面には表示されない**
+（他の人があなたのプロフィールを見た時だけ表示される）。自分の見た目を確認したい
+場合は、別アカウントか友達に見てもらう必要がある。
+
+## ポーリング方式について
+
+固定間隔での問い合わせではなく、曲の長さが分かっている場合は
+「曲が終わりそうなタイミングの少し後」を狙って次回チェックするように
+間隔を毎回計算し直している（`MIN_POLL_INTERVAL_MS`〜`MAX_POLL_INTERVAL_MS`の
+範囲でクランプ）。長い曲でもMAX_POLL_INTERVAL_MSを超えて待つことはないので、
+途中でスキップされてもそこそこ早く気付ける。曲の長さが分からない場合は
+`POLL_INTERVAL_MS`の固定間隔にフォールバックする。
+
+| 変数 | 内容 |
+|---|---|
+| `POLL_INTERVAL_MS` | 曲の長さ不明時の固定間隔ms（デフォルト15000） |
+| `MIN_POLL_INTERVAL_MS` | 適応ポーリングの下限ms（デフォルト5000） |
+| `MAX_POLL_INTERVAL_MS` | 適応ポーリングの上限ms（デフォルト45000）
+
 ## 注意点
 
 - PCがスリープしている間、またはDiscordデスクトップを閉じている間はRPCが反映されない
-- ListenBrainzの`playing-now`は、last.fm連携などのスクロブラーが有効になっている
-  必要がある
+- ListenBrainzの`playing-now`は、last.fm連携などのスクロブラーが有効になっている必要がある
 - 常駐させたい場合は pm2 / systemd（`--user`サービス）などでバックグラウンド常駐化すると良い
