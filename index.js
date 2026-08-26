@@ -28,6 +28,11 @@ const END_BUFFER_MS = 2000;
 // 何ms更新が来なかったらPresenceを消すか
 const STALE_TIMEOUT_MS = 60 * 1000;
 
+// ListenBrainz/Cover Art Archiveでジャケットが見つからなかった時に
+// iTunes/Deezerへフォールバック検索するかどうか（"false"で無効化）
+const COVER_FALLBACK_ENABLED =
+  (process.env.COVER_FALLBACK_ENABLED ?? "true") !== "false";
+
 // 曲ごとのメタ情報探索結果のキャッシュ（曲が変わるたびに毎回引き直さないため）
 const trackMetaCache = new Map();
 
@@ -189,6 +194,72 @@ async function lookupOnce(artist, track, album) {
   return { coverUrl, recordingMbid: json.recording_mbid || null };
 }
 
+/**
+ * iTunes Search APIからジャケット画像を検索する（APIキー不要）。
+ * 返ってくるartworkUrl100は100x100の小さい画像なので、600x600に置換して使う。
+ */
+async function fetchCoverFromItunes(artist, track) {
+  try {
+    const params = new URLSearchParams({
+      term: `${artist} ${track}`,
+      media: "music",
+      entity: "song",
+      limit: "1",
+    });
+    const res = await fetch(`https://itunes.apple.com/search?${params}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const artwork = json.results?.[0]?.artworkUrl100;
+    return artwork ? artwork.replace("100x100bb", "600x600bb") : null;
+  } catch (err) {
+    console.warn("[cover] iTunes検索エラー:", err.message);
+    return null;
+  }
+}
+
+/**
+ * Deezerの検索APIからジャケット画像を探す（APIキー不要、iTunesでも
+ * 見つからなかった時のさらなるフォールバック）。
+ */
+async function fetchCoverFromDeezer(artist, track) {
+  try {
+    const params = new URLSearchParams({
+      q: `artist:"${artist}" track:"${track}"`,
+    });
+    const res = await fetch(`https://api.deezer.com/search?${params}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const album = json.data?.[0]?.album;
+    return album?.cover_xl || album?.cover_big || album?.cover_medium || null;
+  } catch (err) {
+    console.warn("[cover] Deezer検索エラー:", err.message);
+    return null;
+  }
+}
+
+/**
+ * ListenBrainz/Cover Art Archiveでジャケットが見つからなかった曲について、
+ * iTunes → Deezerの順に外部ソースからジャケット画像を探す。
+ * どちらもヒットしなければnullを返し、呼び出し側で既定ロゴにフォールバックする。
+ */
+async function fetchCoverFallback(artist, track) {
+  if (!COVER_FALLBACK_ENABLED) return null;
+
+  const itunes = await fetchCoverFromItunes(artist, track);
+  if (itunes) {
+    console.log("[cover] iTunesでジャケット取得");
+    return itunes;
+  }
+
+  const deezer = await fetchCoverFromDeezer(artist, track);
+  if (deezer) {
+    console.log("[cover] Deezerでジャケット取得");
+    return deezer;
+  }
+
+  return null;
+}
+
 /** MusicBrainzのrecordingエンドポイントから曲の長さ(ms)を取得する。 */
 async function fetchRecordingLength(recordingMbid) {
   if (!recordingMbid) return null;
@@ -248,6 +319,11 @@ async function resolveTrackMeta(artist, track, album, knownDurationMs) {
       if (coverUrl && durationMs) break;
       if (hit) break; // マッチ自体はしたので、これ以上緩い条件では試さない
     }
+  }
+
+  // ListenBrainz/CAAで見つからなかった場合、iTunes/Deezerへフォールバック検索する
+  if (!coverUrl) {
+    coverUrl = await fetchCoverFallback(artist, track);
   }
 
   const result = { coverUrl, durationMs, recordingMbid };
