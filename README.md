@@ -31,12 +31,17 @@ npm start
 | `LB_USERNAME` | ListenBrainzのユーザー名（必須） |
 | `LB_TOKEN` | ListenBrainzのユーザートークン（ジャケット画像検索に必須。未設定でも動くがジャケットは常に既定ロゴになる） |
 | `POLL_INTERVAL_MS` | 曲の長さ不明時の固定間隔ms（省略可、デフォルト15000） |
+| `COVER_FALLBACK_ENABLED` | ListenBrainz/CAAでジャケットが見つからない時にiTunes/Deezerへフォールバック検索するか（省略可、デフォルトtrue。`false`で無効化） |
 
 ## ジャケット画像について
 
 `playing-now`エンドポイントの返り値には基本的にMusicBrainzへのマッチング情報 (`mbid_mapping`)が載らない（一時的な再生中通知はマッピング処理を通らないため）。  
 そのため曲が変わるたびに`/1/metadata/lookup/`で曲名+アーティスト名から改めてMusicBrainzへの自動マッチングを引き直し、そこで得られる`caa_id`/`caa_release_mbid`からCover Art ArchiveのURLを組み立てて使っている。  
-マッチしなかった曲や、Cover Art Archiveに画像が無いリリースは既定のロゴ(`listenbrainz_logo`アセット)にフォールバックする。  
+マッチしなかった曲や、Cover Art Archiveに画像が無いリリースは、続けてiTunes Search API → Deezer検索APIの順に
+外部ソースからジャケット画像を探しに行く（どちらもAPIキー不要）。ここでも見つからなければ既定のロゴ
+(`listenbrainz_logo`アセット)にフォールバックする。  
+この外部フォールバック検索は`COVER_FALLBACK_ENABLED=false`で無効化できる（`LB_TOKEN`未設定でCAA検索自体が
+スキップされる場合も、この外部検索だけは有効な限り動作する）。  
 結果は曲ごとにメモリ上でキャッシュするので、同じ曲の再生中は毎tickで検索し直さない。
 
 ## 表示形式について
