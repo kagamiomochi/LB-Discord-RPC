@@ -28,6 +28,9 @@ const END_BUFFER_MS = 2000;
 // 何ms更新が来なかったらPresenceを消すか
 const STALE_TIMEOUT_MS = 60 * 1000;
 
+// Discordデスクトップが起動していない/接続が切れた場合の再接続間隔（ミリ秒）
+const RECONNECT_INTERVAL_MS = Number(process.env.RECONNECT_INTERVAL_MS || 5000);
+
 // ListenBrainz/Cover Art Archiveでジャケットが見つからなかった時に
 // iTunes/Deezerへフォールバック検索するかどうか（"false"で無効化）
 const COVER_FALLBACK_ENABLED =
@@ -37,31 +40,55 @@ const COVER_FALLBACK_ENABLED =
 const trackMetaCache = new Map();
 
 // ==== Discord RPC接続 ====
+// discord-rpcは一度接続に失敗した同じClientインスタンスで再度login()しても
+// 内部のtransportが正しく再利用されず繋がらないことがあるため、
+// 再試行のたびに新しいRPC.Clientを作り直す。
+// これによりDiscordデスクトップが起動していない間はRECONNECT_INTERVAL_MSごとに
+// 新規接続を試み続け、Discordが起動され次第自動的に繋がるようになる。
 RPC.register(CLIENT_ID);
-const rpc = new RPC.Client({ transport: "ipc" });
+let rpc = null;
 let rpcReady = false;
+let reconnectTimer = null;
 
-function connectRpc() {
-  rpc.login({ clientId: CLIENT_ID }).catch((err) => {
-    console.error(
-      "[discord-rpc] ログイン失敗（Discordデスクトップが起動しているか確認）:",
-      err.message
-    );
-    setTimeout(connectRpc, 5000);
-  });
+function scheduleReconnect() {
+  if (reconnectTimer) return; // 既に予約済みなら二重に予約しない
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectRpc();
+  }, RECONNECT_INTERVAL_MS);
 }
 
-rpc.on("ready", () => {
-  rpcReady = true;
-  console.log("[discord-rpc] 接続しました。ユーザー:", rpc.user?.username);
-  startPolling();
-});
-
-rpc.transport.on("close", () => {
+function connectRpc() {
   rpcReady = false;
-  console.warn("[discord-rpc] 接続が切れました。再接続します...");
-  setTimeout(connectRpc, 5000);
-});
+  const client = new RPC.Client({ transport: "ipc" });
+  rpc = client;
+
+  client.on("ready", () => {
+    if (rpc !== client) return; // 破棄済みクライアントからの遅延イベントは無視
+    rpcReady = true;
+    console.log("[discord-rpc] 接続しました。ユーザー:", client.user?.username);
+    startPolling();
+  });
+
+  client.transport.on("close", () => {
+    if (rpc !== client) return; // 破棄済みクライアントからの遅延イベントは無視
+    if (rpcReady) {
+      console.warn("[discord-rpc] 接続が切れました。再接続します...");
+    }
+    rpcReady = false;
+    scheduleReconnect();
+  });
+
+  client.login({ clientId: CLIENT_ID }).catch((err) => {
+    if (rpc !== client) return;
+    console.error(
+      `[discord-rpc] ログイン失敗（Discordデスクトップが起動しているか確認）。` +
+        `${RECONNECT_INTERVAL_MS / 1000}秒後に再試行します:`,
+      err.message
+    );
+    scheduleReconnect();
+  });
+}
 
 connectRpc();
 
