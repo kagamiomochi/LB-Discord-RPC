@@ -1,3 +1,5 @@
+# スマホで流してる曲をDiscordに表示させるために作ったのに、KettuとかRevengeにそういうプラグインあったわ
+
 # LB Discord RPC
 
 ListenBrainzのNowPlayingをポーリングしてPC上のDiscordデスクトップクライアントにRichPresenceとして反映します
