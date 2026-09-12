@@ -1,4 +1,4 @@
-# スマホで流してる曲をDiscordに表示させるために作ったのに、KettuとかRevengeにそういうプラグインあったわ
+# スマホで流してる曲をDiscordに表示させるために作ったのにKettuとかRevengeにそういうプラグインあった
 
 # LB Discord RPC
 
